@@ -8,15 +8,11 @@ public func startServer(client: YNABClient) async throws {
         capabilities: .init(tools: .init(listChanged: false))
     )
 
-    let transport = StdioTransport()
-    try await server.start(transport: transport)
-
-    // Register tool listing handler
+    // Register handlers before starting so they're ready when the client connects
     await server.withMethodHandler(ListTools.self) { _ in
         ListTools.Result(tools: ToolHandlers.allTools)
     }
 
-    // Register tool call handler
     await server.withMethodHandler(CallTool.self) { params in
         await ToolHandlers.handleCall(
             name: params.name,
@@ -24,6 +20,9 @@ public func startServer(client: YNABClient) async throws {
             client: client
         )
     }
+
+    let transport = StdioTransport()
+    try await server.start(transport: transport)
 
     log("YNAB MCP server started")
     await server.waitUntilCompleted()
