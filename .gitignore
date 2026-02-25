@@ -7,3 +7,4 @@ DerivedData/
 .netrc
 .claude/settings.local.json
 Package.resolved
+.mcp.json
