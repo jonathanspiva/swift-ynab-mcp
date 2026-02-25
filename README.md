@@ -87,6 +87,16 @@ If you use 1Password, you can avoid storing the token in plaintext by using `op 
 }
 ```
 
+**Limitation:** `op` requires an active biometric session. Claude Code spawns MCP servers non-interactively, so `op` can't prompt for authentication. If your session has expired, the MCP server will silently fail to connect, and `/mcp` reconnect won't help either.
+
+To fix this, run any `op` command in a terminal first to establish a session, then restart Claude Code:
+
+```bash
+op read "op://Your Vault/YNAB Token/credential" > /dev/null
+```
+
+This is a [known limitation](https://github.com/anthropics/claude-code/issues/23642) of how Claude Code launches subprocesses. Native `op://` resolution in MCP config would eliminate this problem.
+
 ## Rate Limiting
 
 200 requests per hour (in-memory, resets on restart). This matches the YNAB API limit of 200 requests per hour per token.
