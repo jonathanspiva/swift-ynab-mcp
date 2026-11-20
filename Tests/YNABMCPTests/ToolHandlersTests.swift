@@ -29,12 +29,16 @@ struct ToolHandlersTests {
         "bulk_update_transactions",
         "delete_transaction",
         "rename_payee",
+        "merge_payees",
         "set_category_assigned",
         "create_account",
         "reconcile_account",
+        "create_scheduled_transaction",
+        "update_scheduled_transaction",
+        "delete_scheduled_transaction",
     ]
 
-    static let destructiveToolNames: Set<String> = ["delete_transaction"]
+    static let destructiveToolNames: Set<String> = ["delete_transaction", "delete_scheduled_transaction"]
 
     func makeClient() -> YNABClient {
         YNABClient(accessToken: "fake-token", rateLimiter: RateLimiter(maxRequests: 200, windowSeconds: 3600))

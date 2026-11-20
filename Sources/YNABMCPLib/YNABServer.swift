@@ -3,7 +3,7 @@ import MCP
 
 public enum ServerInfo {
     public static let name = "ynab-mcp"
-    public static let version = "2.1.0"
+    public static let version = "2.2.0"
 
     /// Sent to the client at initialize time; Claude Code shows this to the model alongside the tools.
     public static func instructions(readOnly: Bool, defaultPlanId: String) -> String {
@@ -14,7 +14,8 @@ public enum ServerInfo {
         - Amounts in and out are in the plan's currency units (e.g. -42.50), not YNAB milliunits. Negative is an outflow.
         - Dates are YYYY-MM-DD. Months are YYYY-MM-01 or 'current'.
         - Look up IDs with list_accounts, list_categories, and list_payees before writing.
-        - YNAB allows 200 API requests per hour. Prefer one bulk_update_transactions call over many update_transaction calls, and use date ranges and filters instead of paging through history.
+        - YNAB allows 200 API requests per hour. Prefer one bulk_update_transactions call over many update_transaction calls (its `updates` list gives each transaction its own changes), and use date ranges and filters instead of paging through history.
+        - To combine duplicate payees use merge_payees; rename_payee does not merge.
         - For spending questions use spending_report or monthly_trends rather than summing list_transactions output yourself.
         """
         if readOnly {

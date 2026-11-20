@@ -34,10 +34,11 @@ extension ToolHandlers {
         bulkUpdateTransactions,
         deleteTransaction,
         renamePayee,
+        mergePayees,
         setCategoryAssigned,
         createAccount,
         reconcileAccount,
-    ]
+    ] + scheduledSpecs
 
     static let deleteTransaction = ToolSpec(
         name: "delete_transaction",
@@ -203,56 +204,38 @@ extension ToolHandlers {
     static let bulkUpdateTransactions = ToolSpec(
         name: "bulk_update_transactions",
         title: "Bulk update transactions",
-        description: "Apply the same changes to many transactions in one request (one API call). Useful for approving or categorizing a batch.",
+        description: "Update many transactions in one API call. Fields at the top level apply to every ID in transaction_ids. To give each transaction its own changes (e.g. a cleaned-up payee_name and a location memo per transaction), pass updates: a list of {transaction_id, ...fields}; these override the top-level fields. The two can be combined.",
         inputSchema: Schema.object(
             [
                 "plan_id": Schema.planId,
-                "transaction_ids": Schema.stringArray("Transaction IDs to update"),
+                "transaction_ids": Schema.stringArray("Transaction IDs that get the top-level fields"),
                 "category_id": Schema.string("Category ID to set"),
                 "payee_name": Schema.string("Payee name to set"),
+                "memo": Schema.string("Memo to set"),
+                "date": Schema.date("Date to set"),
                 "approved": Schema.boolean("Approved status to set"),
                 "flag_color": Schema.flagColor,
                 "cleared": Schema.cleared,
-                "memo": Schema.string("Memo to set"),
-            ],
-            required: ["transaction_ids"]
+                "updates": Schema.objectArray(
+                    "Per-transaction changes",
+                    items: [
+                        "transaction_id": Schema.string("Transaction ID"),
+                        "category_id": Schema.string("Category ID"),
+                        "payee_name": Schema.string("Payee name"),
+                        "memo": Schema.string("Memo"),
+                        "date": Schema.date("Date"),
+                        "approved": Schema.boolean("Approved status"),
+                        "flag_color": Schema.flagColor,
+                        "cleared": Schema.cleared,
+                    ],
+                    required: ["transaction_id"]
+                ),
+            ]
         ),
         annotations: updateAnnotations
     ) { args, client in
-        let ids = try requireStringArray(args, key: "transaction_ids")
-        let categoryId = args["category_id"]?.stringValue
-        let payeeName = args["payee_name"]?.stringValue
-        let approved = try optionalBool(args, key: "approved")
-        let flagColor = try parseFlagColor(args["flag_color"]?.stringValue)
-        let cleared = try parseClearedStatus(args["cleared"]?.stringValue)
-        let memo = args["memo"]?.stringValue
-
-        let hasUpdate = categoryId != nil || payeeName != nil || approved != nil
-            || flagColor != nil || cleared != nil || memo != nil
-        guard hasUpdate else {
-            throw YNABMCPError.invalidParameter(
-                "bulk_update_transactions",
-                detail: "pass at least one of category_id, payee_name, approved, flag_color, cleared, memo"
-            )
-        }
-
-        let transactions = ids.map { id in
-            SaveTransactionWithIdOrImportId(
-                id: id,
-                importId: nil,
-                accountId: nil,
-                date: nil,
-                amount: nil,
-                payeeId: nil,
-                payeeName: payeeName,
-                categoryId: categoryId,
-                memo: memo,
-                cleared: cleared,
-                approved: approved,
-                flagColor: flagColor,
-                subtransactions: nil
-            )
-        }
+        let transactions = try buildBulkUpdates(args)
+        let ids = transactions.compactMap(\.id)
         let updated = try await client.updateTransactions(
             planId: planId(args, client: client),
             transactions: transactions
