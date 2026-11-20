@@ -29,6 +29,12 @@ public enum Formatters {
         Int((amount * 1000).rounded())
     }
 
+    /// Round milliunits to the nearest cent (10 milliunits) so computed values like averages
+    /// don't print a third decimal place.
+    public static func roundToCents(_ milliunits: Int) -> Int {
+        Int((Double(milliunits) / 10).rounded()) * 10
+    }
+
     /// Escape characters that break markdown table cells.
     public static func escapeTableCell(_ value: String) -> String {
         value

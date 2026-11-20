@@ -19,15 +19,22 @@ struct ToolHandlersTests {
         "get_transactions_by_category",
         "list_payees",
         "list_scheduled_transactions",
+        "spending_report",
+        "monthly_trends",
     ]
 
     static let writeToolNames: Set<String> = [
         "create_transaction",
         "update_transaction",
         "bulk_update_transactions",
+        "delete_transaction",
         "rename_payee",
         "set_category_assigned",
+        "create_account",
+        "reconcile_account",
     ]
+
+    static let destructiveToolNames: Set<String> = ["delete_transaction"]
 
     func makeClient() -> YNABClient {
         YNABClient(accessToken: "fake-token", rateLimiter: RateLimiter(maxRequests: 200, windowSeconds: 3600))
@@ -75,12 +82,13 @@ struct ToolHandlersTests {
         }
     }
 
-    @Test("Write tools are annotated as writes and not destructive")
+    @Test("Write tools are annotated as writes; only deletes are destructive")
     func writeToolAnnotations() {
         for spec in ToolHandlers.allSpecs where Self.writeToolNames.contains(spec.tool.name) {
             #expect(spec.isWrite)
             #expect(spec.tool.annotations.readOnlyHint == false)
-            #expect(spec.tool.annotations.destructiveHint == false)
+            let destructive = Self.destructiveToolNames.contains(spec.tool.name)
+            #expect(spec.tool.annotations.destructiveHint == destructive, "'\(spec.tool.name)' destructiveHint")
         }
         #expect(ToolHandlers.createTransaction.tool.annotations.idempotentHint == false)
         #expect(ToolHandlers.updateTransaction.tool.annotations.idempotentHint == true)
@@ -196,6 +204,133 @@ struct ToolHandlersTests {
         #expect(text(of: result).contains("limit"))
     }
 
+    @Test("Split lines that don't add up are rejected before calling YNAB")
+    func splitTotalMismatchRejected() async {
+        let result = await ToolHandlers.handleCall(
+            name: "create_transaction",
+            arguments: [
+                "account_id": "a", "date": "2026-01-01", "amount": .double(-2700),
+                "subtransactions": .array([
+                    .object(["amount": .double(-2400), "category_id": "c1"]),
+                    .object(["amount": .double(-200), "category_id": "c2"]),
+                ]),
+            ],
+            client: makeClient()
+        )
+        #expect(result.isError == true)
+        #expect(text(of: result).contains("add up"))
+    }
+
+    @Test("A single split line is rejected")
+    func singleSplitLineRejected() async {
+        let result = await ToolHandlers.handleCall(
+            name: "update_transaction",
+            arguments: ["transaction_id": "t1", "subtransactions": .array([.object(["amount": .double(-1)])])],
+            client: makeClient()
+        )
+        #expect(result.isError == true)
+        #expect(text(of: result).contains("at least 2"))
+    }
+
+    @Test("transfer_account_id with payee_name is rejected")
+    func transferWithPayeeRejected() async {
+        let result = await ToolHandlers.handleCall(
+            name: "create_transaction",
+            arguments: [
+                "account_id": "a", "date": "2026-01-01", "amount": .double(-500),
+                "transfer_account_id": "b", "payee_name": "ATM",
+            ],
+            client: makeClient()
+        )
+        #expect(result.isError == true)
+        #expect(text(of: result).contains("transfer_account_id"))
+    }
+
+    @Test("create_account rejects unknown account types")
+    func createAccountBadType() async {
+        let result = await ToolHandlers.handleCall(
+            name: "create_account",
+            arguments: ["name": "Van", "type": "autoLoan", "balance": .double(-100)],
+            client: makeClient()
+        )
+        #expect(result.isError == true)
+        #expect(text(of: result).contains("otherLiability"))
+    }
+
+    @Test("spending_report rejects unknown group_by")
+    func spendingReportBadGroup() async {
+        let result = await ToolHandlers.handleCall(
+            name: "spending_report",
+            arguments: ["group_by": "week"],
+            client: makeClient()
+        )
+        #expect(result.isError == true)
+        #expect(text(of: result).contains("group_by"))
+    }
+
+    @Test("monthly_trends rejects mid-month dates")
+    func monthlyTrendsBadMonth() async {
+        let result = await ToolHandlers.handleCall(
+            name: "monthly_trends",
+            arguments: ["since_month": "2026-01-15"],
+            client: makeClient()
+        )
+        #expect(result.isError == true)
+        #expect(text(of: result).contains("since_month"))
+    }
+
+    @Test("delete_transaction requires an ID")
+    func deleteRequiresId() async {
+        let result = await ToolHandlers.handleCall(name: "delete_transaction", arguments: [:], client: makeClient())
+        #expect(result.isError == true)
+        #expect(text(of: result).contains("transaction_id"))
+    }
+
+    // MARK: - Splits
+
+    @Test("parseSplitLines converts amounts to milliunits and keeps fields")
+    func parseSplitLines() throws {
+        let lines = try ToolHandlers.parseSplitLines([
+            "subtransactions": .array([
+                .object(["amount": .double(-2400), "transfer_account_id": "acct-grom"]),
+                .object(["amount": .int(-300), "category_id": "cash", "memo": "kept"]),
+            ]),
+        ])
+        #expect(lines == [
+            SplitLineInput(amount: -2_400_000, transferAccountId: "acct-grom"),
+            SplitLineInput(amount: -300_000, categoryId: "cash", memo: "kept"),
+        ])
+        #expect(try ToolHandlers.parseSplitLines([:]) == nil)
+        #expect(throws: YNABMCPError.self) {
+            try ToolHandlers.parseSplitLines(["subtransactions": .array([.object(["memo": "x"]), .object(["amount": 1])])])
+        }
+        #expect(throws: YNABMCPError.self) {
+            try ToolHandlers.parseSplitLines(["subtransactions": .array([
+                .object(["amount": 1, "payee_name": "p", "transfer_account_id": "a"]),
+                .object(["amount": 1]),
+            ])])
+        }
+    }
+
+    @Test("validateSplitTotal accepts exact sums only")
+    func validateSplitTotal() throws {
+        let lines = [SplitLineInput(amount: -2_400_000), SplitLineInput(amount: -300_000)]
+        try ToolHandlers.validateSplitTotal(lines, total: -2_700_000)
+        #expect(throws: YNABMCPError.self) { try ToolHandlers.validateSplitTotal(lines, total: -2_600_000) }
+    }
+
+    @Test("saveSubtransactions maps transfer accounts to transfer payees")
+    func saveSubtransactions() {
+        let saved = ToolHandlers.saveSubtransactions(
+            [SplitLineInput(amount: -1000, transferAccountId: "acct"), SplitLineInput(amount: -500, categoryId: "c")],
+            transferPayees: ["acct": "payee-transfer"]
+        )
+        #expect(saved[0].payeeId == "payee-transfer")
+        #expect(saved[0].categoryId == nil)
+        #expect(saved[1].payeeId == nil)
+        #expect(saved[1].categoryId == "c")
+    }
+
     // MARK: - Parameter helpers
 
     @Test("planId falls back to the client default")
@@ -303,6 +438,6 @@ struct ToolHandlersTests {
 
 extension Formatters {
     static func isoDay(_ date: Date) -> String {
-        date.formatted(.iso8601.year().month().day())
+        ToolHandlers.isoDay(date)
     }
 }

@@ -14,7 +14,7 @@ Gives AI assistants like Claude read and write access to your YNAB plans, transa
 
 Every tool takes an optional `plan_id`. When it's omitted the server uses your last-used plan (or `YNAB_PLAN_ID`, if set), so most conversations never need to look up an ID.
 
-### Read Tools (11)
+### Read Tools (13)
 
 | Tool | Description |
 |------|-------------|
@@ -29,16 +29,23 @@ Every tool takes an optional `plan_id`. When it's omitted the server uses your l
 | `get_transactions_by_category` | Transaction history for a category |
 | `list_payees` | Payees with IDs, optionally filtered by name |
 | `list_scheduled_transactions` | Upcoming scheduled transactions |
+| `spending_report` | Spending over a date range by category, category group, payee, or month (splits broken out, transfers excluded, income shown separately) |
+| `monthly_trends` | Month-by-month income, assigned, activity, Ready to Assign, and age of money, with averages |
 
-### Write Tools (5)
+### Write Tools (8)
 
 | Tool | Description |
 |------|-------------|
-| `create_transaction` | Create a transaction |
-| `update_transaction` | Change any fields of one transaction |
+| `create_transaction` | Create a transaction, transfer (`transfer_account_id`), or split (`subtransactions`) |
+| `update_transaction` | Change any fields of one transaction, convert it to a transfer, or split it |
 | `bulk_update_transactions` | Apply the same changes to many transactions in one request |
+| `delete_transaction` | Permanently delete a transaction (marked destructive) |
 | `rename_payee` | Rename a payee everywhere it is used |
 | `set_category_assigned` | Set a category's assigned amount for a month |
+| `create_account` | Create an unlinked on-budget or tracking account |
+| `reconcile_account` | Reconcile to a statement balance: add a balance adjustment if needed and lock cleared transactions (`dry_run` to preview) |
+
+YNAB doesn't allow editing the lines of a transaction that is already split. `update_transaction` can split an unsplit transaction, but to change an existing split, delete and recreate it.
 
 Write tools are hidden entirely when `YNAB_READ_ONLY` is set.
 
@@ -122,7 +129,7 @@ YNAB_READ_ONLY=1 op run --env-file .env -- .build/release/ynab-mcp
 
 ## Rate Limiting
 
-YNAB allows 200 requests per hour per token. The server tracks this in memory (it resets on restart) and refuses calls past the limit with a clear message instead of letting YNAB return errors. Each tool call costs one request, except `get_plan_summary`, which costs two.
+YNAB allows 200 requests per hour per token. The server tracks this in memory (it resets on restart) and refuses calls past the limit with a clear message instead of letting YNAB return errors. Most tool calls cost one request. The exceptions: `get_plan_summary` costs two; `spending_report` two or three; `create_transaction` and `update_transaction` one more when they involve a transfer or (for an update) a split without a new amount; `reconcile_account` up to five.
 
 ## Dependencies
 

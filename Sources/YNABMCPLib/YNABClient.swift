@@ -35,6 +35,21 @@ public actor YNABClient {
         return try await ynab.accounts.accounts(planId: planId, lastKnowledgeOfServer: nil).accounts
     }
 
+    public func getAccount(planId: String, accountId: String) async throws -> Account {
+        try await checkRate()
+        return try await ynab.accounts.account(planId: planId, accountId: accountId)
+    }
+
+    public func createAccount(
+        planId: String,
+        name: String,
+        type: SaveAccountType,
+        balance: Int
+    ) async throws -> Account {
+        try await checkRate()
+        return try await ynab.accounts.newPlanAccount(planId: planId, name: name, type: type, balance: balance)
+    }
+
     // MARK: - Categories
 
     public func listCategories(planId: String) async throws -> [CategoryGroupWithCategories] {
@@ -62,6 +77,11 @@ public actor YNABClient {
     public func getMonth(planId: String, month: String) async throws -> MonthDetail {
         try await checkRate()
         return try await ynab.months.month(planId: planId, month: month)
+    }
+
+    public func listMonths(planId: String) async throws -> [MonthSummary] {
+        try await checkRate()
+        return try await ynab.months.months(planId: planId, lastKnowledgeOfServer: nil).months
     }
 
     // MARK: - Transactions
@@ -135,6 +155,13 @@ public actor YNABClient {
         return try await ynab.transactions.updateTransactions(
             planId: planId, transactions: transactions
         ).transactions ?? []
+    }
+
+    public func deleteTransaction(planId: String, transactionId: String) async throws -> TransactionDetail? {
+        try await checkRate()
+        return try await ynab.transactions.deleteTransaction(
+            planId: planId, transactionId: transactionId
+        ).transaction
     }
 
     // MARK: - Scheduled Transactions

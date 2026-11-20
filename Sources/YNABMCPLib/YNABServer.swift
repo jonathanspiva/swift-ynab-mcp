@@ -3,7 +3,7 @@ import MCP
 
 public enum ServerInfo {
     public static let name = "ynab-mcp"
-    public static let version = "2.0.0"
+    public static let version = "2.1.0"
 
     /// Sent to the client at initialize time; Claude Code shows this to the model alongside the tools.
     public static func instructions(readOnly: Bool, defaultPlanId: String) -> String {
@@ -15,6 +15,7 @@ public enum ServerInfo {
         - Dates are YYYY-MM-DD. Months are YYYY-MM-01 or 'current'.
         - Look up IDs with list_accounts, list_categories, and list_payees before writing.
         - YNAB allows 200 API requests per hour. Prefer one bulk_update_transactions call over many update_transaction calls, and use date ranges and filters instead of paging through history.
+        - For spending questions use spending_report or monthly_trends rather than summing list_transactions output yourself.
         """
         if readOnly {
             text += "\n- This server is read-only (YNAB_READ_ONLY is set). Write tools are unavailable."
