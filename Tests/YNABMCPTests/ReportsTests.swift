@@ -163,6 +163,17 @@ struct ReportsTests {
         #expect(!text.contains("$"))
     }
 
+    @Test("Split transfer lines are labelled with the transfer payee, not Uncategorized")
+    func splitLineLabel() {
+        #expect(Formatters.splitLineLabel(Self.sub(amount: -1, categoryId: "c", category: "Cash")) == "Cash")
+        #expect(Formatters.splitLineLabel(Self.sub(
+            amount: -1, category: "Uncategorized", payee: "Transfer : Columbia Savings", transferAccountId: "s"
+        )) == "Transfer : Columbia Savings")
+        #expect(Formatters.splitLineLabel(Self.sub(
+            amount: -1, categoryId: "b", category: "Motorcycle - Bikes", payee: "Transfer : Honda Grom (Blue)", transferAccountId: "g"
+        )) == "Transfer : Honda Grom (Blue), Motorcycle - Bikes")
+    }
+
     @Test("roundToCents rounds milliunits to whole cents")
     func roundToCents() {
         #expect(Formatters.roundToCents(-25_589_606) == -25_589_610)
