@@ -23,7 +23,7 @@ Every tool takes an optional `plan_id`. When it's omitted the server uses your l
 | `list_accounts` | Accounts with balances, type, and reconciliation status |
 | `list_categories` | Category groups and categories with IDs and amounts |
 | `get_month_summary` | Income, assigned, activity, Ready to Assign, and per-category breakdown for a month |
-| `list_transactions` | Transactions by date range, account, category, or `unapproved`/`uncategorized` |
+| `list_transactions` | Transactions by date range, account, category, or `unapproved`/`uncategorized`, including the original bank payee string when it differs |
 | `get_transaction` | Full transaction details, including split lines |
 | `get_transactions_by_payee` | Transaction history for a payee |
 | `get_transactions_by_category` | Transaction history for a category |
@@ -32,20 +32,24 @@ Every tool takes an optional `plan_id`. When it's omitted the server uses your l
 | `spending_report` | Spending over a date range by category, category group, payee, or month (splits broken out, transfers excluded, income shown separately) |
 | `monthly_trends` | Month-by-month income, assigned, activity, Ready to Assign, and age of money, with averages |
 
-### Write Tools (8)
+### Write Tools (12)
 
 | Tool | Description |
 |------|-------------|
 | `create_transaction` | Create a transaction, transfer (`transfer_account_id`), or split (`subtransactions`) |
 | `update_transaction` | Change any fields of one transaction, convert it to a transfer, or split it |
-| `bulk_update_transactions` | Apply the same changes to many transactions in one request |
+| `bulk_update_transactions` | Update many transactions in one request: shared changes, per-transaction changes (`updates`), or both |
 | `delete_transaction` | Permanently delete a transaction (marked destructive) |
-| `rename_payee` | Rename a payee everywhere it is used |
+| `rename_payee` | Rename a payee everywhere it is used (does not merge duplicates) |
+| `merge_payees` | Move every transaction from one or more payees to another (`dry_run` to preview) |
 | `set_category_assigned` | Set a category's assigned amount for a month |
 | `create_account` | Create an unlinked on-budget or tracking account |
 | `reconcile_account` | Reconcile to a statement balance: add a balance adjustment if needed and lock cleared transactions (`dry_run` to preview) |
+| `create_scheduled_transaction` | Schedule a future or recurring transaction or transfer |
+| `update_scheduled_transaction` | Change a scheduled transaction, keeping the fields you don't pass |
+| `delete_scheduled_transaction` | Stop a scheduled transaction (marked destructive) |
 
-YNAB doesn't allow editing the lines of a transaction that is already split. `update_transaction` can split an unsplit transaction, but to change an existing split, delete and recreate it.
+YNAB doesn't allow editing the lines of a transaction that is already split. `update_transaction` can split an unsplit transaction, but to change an existing split, delete and recreate it. For the same reason, `merge_payees` leaves split lines on their old payee and lists them, and `update_scheduled_transaction` refuses scheduled splits. The API can't delete payees, so merged-away payees stay in the list with no transactions.
 
 Write tools are hidden entirely when `YNAB_READ_ONLY` is set.
 
@@ -129,7 +133,7 @@ YNAB_READ_ONLY=1 op run --env-file .env -- .build/release/ynab-mcp
 
 ## Rate Limiting
 
-YNAB allows 200 requests per hour per token. The server tracks this in memory (it resets on restart) and refuses calls past the limit with a clear message instead of letting YNAB return errors. Most tool calls cost one request. The exceptions: `get_plan_summary` costs two; `spending_report` two or three; `create_transaction` and `update_transaction` one more when they involve a transfer or (for an update) a split without a new amount; `reconcile_account` up to five.
+YNAB allows 200 requests per hour per token. The server tracks this in memory (it resets on restart) and refuses calls past the limit with a clear message instead of letting YNAB return errors. Most tool calls cost one request. The exceptions: `get_plan_summary` costs two; `spending_report` two or three; `create_transaction` and `update_transaction` one more when they involve a transfer or (for an update) a split without a new amount; `reconcile_account` up to five; `merge_payees` one per source payee plus two; `update_scheduled_transaction` two (three with a transfer).
 
 ## Dependencies
 

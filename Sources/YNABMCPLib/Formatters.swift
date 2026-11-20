@@ -46,6 +46,13 @@ public enum Formatters {
         Int((Double(milliunits) / 10).rounded()) * 10
     }
 
+    /// The raw bank payee string, shown only when it adds information (blank when missing or
+    /// identical to the cleaned-up payee). Used to infer a clean payee name and location.
+    public static func importedPayee(_ original: String?, payee: String?) -> String {
+        guard let original, !original.isEmpty, original != payee else { return "" }
+        return original
+    }
+
     /// Escape characters that break markdown table cells.
     public static func escapeTableCell(_ value: String) -> String {
         value
@@ -61,8 +68,8 @@ public enum Formatters {
         if transactions.isEmpty {
             lines.append("No transactions found.")
         } else {
-            lines.append("| ID | Date | Account | Payee | Category | Amount | Cleared | Approved | Memo |")
-            lines.append("|----|------|---------|-------|----------|--------|---------|----------|------|")
+            lines.append("| ID | Date | Account | Payee | Category | Amount | Cleared | Approved | Memo | Imported Payee |")
+            lines.append("|----|------|---------|-------|----------|--------|---------|----------|------|----------------|")
             for txn in transactions {
                 let category = txn.subtransactions.isEmpty ? (txn.categoryName ?? "-") : "Split (\(txn.subtransactions.count))"
                 let cells = [
@@ -75,6 +82,7 @@ public enum Formatters {
                     txn.cleared.rawValue,
                     txn.approved ? "Yes" : "No",
                     esc(txn.memo ?? ""),
+                    esc(importedPayee(txn.importPayeeNameOriginal, payee: txn.payeeName)),
                 ]
                 lines.append("| " + cells.joined(separator: " | ") + " |")
             }
@@ -89,8 +97,8 @@ public enum Formatters {
         if transactions.isEmpty {
             lines.append("No transactions found.")
         } else {
-            lines.append("| ID | Date | Account | Payee | Category | Amount | Cleared | Approved | Memo |")
-            lines.append("|----|------|---------|-------|----------|--------|---------|----------|------|")
+            lines.append("| ID | Date | Account | Payee | Category | Amount | Cleared | Approved | Memo | Imported Payee |")
+            lines.append("|----|------|---------|-------|----------|--------|---------|----------|------|----------------|")
             for txn in transactions {
                 // Subtransactions of a split carry the parent ID; show it so updates target the parent.
                 let id = txn.parentTransactionId.map { "`\($0)` (split part)" } ?? "`\(txn.id)`"
@@ -104,6 +112,7 @@ public enum Formatters {
                     txn.cleared.rawValue,
                     txn.approved ? "Yes" : "No",
                     esc(txn.memo ?? ""),
+                    esc(importedPayee(txn.importPayeeNameOriginal, payee: txn.payeeName)),
                 ]
                 lines.append("| " + cells.joined(separator: " | ") + " |")
             }

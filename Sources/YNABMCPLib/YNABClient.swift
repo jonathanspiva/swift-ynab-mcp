@@ -173,6 +173,35 @@ public actor YNABClient {
         ).scheduledTransactions
     }
 
+    public func getScheduledTransaction(planId: String, id: String) async throws -> ScheduledTransactionDetail {
+        try await checkRate()
+        return try await ynab.scheduledTransactions.scheduledTransaction(planId: planId, transactionId: id)
+    }
+
+    public func createScheduledTransaction(
+        planId: String,
+        transaction: SaveScheduledTransaction
+    ) async throws -> ScheduledTransactionDetail {
+        try await checkRate()
+        return try await ynab.scheduledTransactions.createScheduledTransaction(planId: planId, transaction: transaction)
+    }
+
+    public func updateScheduledTransaction(
+        planId: String,
+        id: String,
+        transaction: SaveScheduledTransaction
+    ) async throws -> ScheduledTransactionDetail {
+        try await checkRate()
+        return try await ynab.scheduledTransactions.updateScheduledTransaction(
+            planId: planId, transactionId: id, transaction: transaction
+        )
+    }
+
+    public func deleteScheduledTransaction(planId: String, id: String) async throws -> ScheduledTransactionDetail {
+        try await checkRate()
+        return try await ynab.scheduledTransactions.deleteScheduledTransaction(planId: planId, transactionId: id)
+    }
+
     // MARK: - Payees
 
     public func listPayees(planId: String) async throws -> [Payee] {
