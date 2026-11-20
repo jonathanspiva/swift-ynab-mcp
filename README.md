@@ -8,39 +8,43 @@
 
 A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server for [YNAB](https://www.ynab.com) (You Need A Budget).
 
-Gives AI assistants like Claude read and write access to your YNAB budgets, transactions, categories, and payees.
+Gives AI assistants like Claude read and write access to your YNAB plans, transactions, categories, and payees.
 
 ## Tools
+
+Every tool takes an optional `plan_id`. When it's omitted the server uses your last-used plan (or `YNAB_PLAN_ID`, if set), so most conversations never need to look up an ID.
 
 ### Read Tools (11)
 
 | Tool | Description |
 |------|-------------|
-| `list_budgets` | List all budgets with names, IDs, and currency |
-| `list_accounts` | List accounts in a budget with balances |
-| `list_categories` | List category groups and categories with balances |
-| `get_budget_summary` | Budget overview with accounts and category groups |
-| `list_recent_transactions` | Recent transactions (filterable by account, date range, approval status) |
-| `get_month_summary` | Category breakdown for a specific month |
-| `get_transaction` | Full transaction details by ID |
-| `list_payees` | List all payees in a budget |
-| `get_transactions_by_payee` | Transaction history for a specific payee |
-| `get_transactions_by_category` | Transaction history for a specific category |
-| `list_scheduled_transactions` | List upcoming scheduled transactions |
+| `list_plans` | List all plans with names, IDs, and currency |
+| `get_plan_summary` | Open account balances plus current-month category amounts |
+| `list_accounts` | Accounts with balances, type, and reconciliation status |
+| `list_categories` | Category groups and categories with IDs and amounts |
+| `get_month_summary` | Income, assigned, activity, Ready to Assign, and per-category breakdown for a month |
+| `list_transactions` | Transactions by date range, account, category, or `unapproved`/`uncategorized` |
+| `get_transaction` | Full transaction details, including split lines |
+| `get_transactions_by_payee` | Transaction history for a payee |
+| `get_transactions_by_category` | Transaction history for a category |
+| `list_payees` | Payees with IDs, optionally filtered by name |
+| `list_scheduled_transactions` | Upcoming scheduled transactions |
 
 ### Write Tools (5)
 
 | Tool | Description |
 |------|-------------|
-| `create_transaction` | Create a new transaction (amount in dollars) |
-| `update_transaction` | Update an existing transaction (amount, payee, category, flag, approval) |
-| `bulk_update_transactions` | Update multiple transactions at once |
-| `rename_payee` | Rename a payee across all transactions |
-| `update_category_budget` | Set the budgeted amount for a category in a given month |
+| `create_transaction` | Create a transaction |
+| `update_transaction` | Change any fields of one transaction |
+| `bulk_update_transactions` | Apply the same changes to many transactions in one request |
+| `rename_payee` | Rename a payee everywhere it is used |
+| `set_category_assigned` | Set a category's assigned amount for a month |
+
+Write tools are hidden entirely when `YNAB_READ_ONLY` is set.
 
 ## Requirements
 
-- macOS 26+
+- macOS 26+ (developed on macOS 27 with Swift 6.4)
 - Swift 6.2+
 - A [YNAB Personal Access Token](https://app.ynab.com/settings/developer)
 
@@ -54,7 +58,19 @@ The binary will be at `.build/release/ynab-mcp`.
 
 ## Configure
 
-Add to your Claude Code MCP config (`~/.claude.json` or project `.claude/settings.json`):
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `YNAB_TOKEN` | yes | Your YNAB personal access token |
+| `YNAB_PLAN_ID` | no | Plan used when a tool call omits `plan_id` (default: `last-used`; `default` also works) |
+| `YNAB_READ_ONLY` | no | Set to `1` to expose only the read tools |
+
+Add it to Claude Code for all projects:
+
+```bash
+claude mcp add ynab --scope user -e YNAB_TOKEN=your-token-here -- /path/to/ynab-mcp
+```
+
+Or check a `.mcp.json` into a project:
 
 ```json
 {
@@ -62,7 +78,8 @@ Add to your Claude Code MCP config (`~/.claude.json` or project `.claude/setting
     "ynab": {
       "command": "/path/to/ynab-mcp",
       "env": {
-        "YNAB_TOKEN": "your-token-here"
+        "YNAB_TOKEN": "${YNAB_TOKEN}",
+        "YNAB_READ_ONLY": "1"
       }
     }
   }
@@ -73,18 +90,10 @@ Add to your Claude Code MCP config (`~/.claude.json` or project `.claude/setting
 
 If you use 1Password, you can avoid storing the token in plaintext by using `op run`:
 
-```json
-{
-  "mcpServers": {
-    "ynab": {
-      "command": "op",
-      "args": ["run", "--no-masking", "--", "/path/to/ynab-mcp"],
-      "env": {
-        "YNAB_TOKEN": "op://Your Vault/YNAB Token/credential"
-      }
-    }
-  }
-}
+```bash
+claude mcp add ynab --scope user \
+  -e "YNAB_TOKEN=op://Your Vault/YNAB Token/credential" \
+  -- op run --no-masking -- /path/to/ynab-mcp
 ```
 
 **Limitation:** `op` requires an active biometric session. Claude Code spawns MCP servers non-interactively, so `op` can't prompt for authentication. If your session has expired, the MCP server will silently fail to connect, and `/mcp` reconnect won't help either.
@@ -95,11 +104,25 @@ To fix this, run any `op` command in a terminal first to establish a session, th
 op read "op://Your Vault/YNAB Token/credential" > /dev/null
 ```
 
-This is a [known limitation](https://github.com/anthropics/claude-code/issues/23642) of how Claude Code launches subprocesses. Native `op://` resolution in MCP config would eliminate this problem.
+This is a [known limitation](https://github.com/anthropics/claude-code/issues/23642) of how Claude Code launches subprocesses.
+
+### Local development
+
+Put a 1Password reference (not the token itself) in a gitignored `.env`:
+
+```bash
+YNAB_TOKEN=op://<vault>/<item>/credential
+```
+
+Then run anything that needs the token through `op run`, for example a read-only session:
+
+```bash
+YNAB_READ_ONLY=1 op run --env-file .env -- .build/release/ynab-mcp
+```
 
 ## Rate Limiting
 
-200 requests per hour (in-memory, resets on restart). This matches the YNAB API limit of 200 requests per hour per token.
+YNAB allows 200 requests per hour per token. The server tracks this in memory (it resets on restart) and refuses calls past the limit with a clear message instead of letting YNAB return errors. Each tool call costs one request, except `get_plan_summary`, which costs two.
 
 ## Dependencies
 
@@ -114,8 +137,18 @@ This server includes write tools that modify your live YNAB data. **[Export your
 
 - Only tested with [Claude Code](https://docs.anthropic.com/en/docs/claude-code). It should work with any MCP client, but your mileage may vary.
 - Write tools modify your actual YNAB data. Use with care.
-- Transaction amounts are in dollars (e.g., `25.50`), not YNAB's native milliunits.
-- Budget and category IDs can be discovered using the read tools (`list_budgets`, `list_categories`, etc.).
+- Amounts are in your plan's currency units (e.g. `-25.50`), not YNAB's native milliunits. Output uses YNAB's own currency formatting.
+- YNAB renamed "budgets" to "plans" in 2026; this server follows the new API naming.
+- IDs can be discovered with the read tools (`list_accounts`, `list_categories`, `list_payees`).
+
+## Inspiration
+
+Feature ideas and conventions borrowed from two other community YNAB servers worth a look:
+
+- [calebl/ynab-mcp-server](https://github.com/calebl/ynab-mcp-server) (TypeScript): read-only mode, spending and cash-flow reports, remote deployment
+- [oliverames/ynab-mcp-server](https://github.com/oliverames/ynab-mcp-server) (JavaScript): near-complete API coverage, write previews and undo, transfer and split handling
+
+YNAB does not publish an official MCP server.
 
 ## License
 

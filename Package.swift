@@ -10,8 +10,8 @@ let package = Package(
         .executable(name: "ynab-mcp", targets: ["ynab-mcp"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/modelcontextprotocol/swift-sdk", from: "0.10.0"),
-        .package(url: "https://github.com/andrebocchini/swiftynab", from: "3.1.4"),
+        .package(url: "https://github.com/modelcontextprotocol/swift-sdk", from: "0.12.1"),
+        .package(url: "https://github.com/andrebocchini/swiftynab", from: "5.1.0"),
     ],
     targets: [
         .target(
