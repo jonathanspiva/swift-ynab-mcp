@@ -4,44 +4,26 @@ import Testing
 @Suite("Formatters")
 struct FormattersTests {
 
-    // MARK: - dollars(from:)
+    // MARK: - money(_:formatted:)
 
-    @Test("Converts positive milliunits to dollars")
-    func dollarsPositive() {
-        #expect(Formatters.dollars(from: 50000) == "$50.00")
+    @Test("Prefers YNAB's formatted string when present")
+    func moneyUsesFormatted() {
+        #expect(Formatters.money(50000, formatted: "€50,00") == "€50,00")
     }
 
-    @Test("Converts negative milliunits to dollars")
-    func dollarsNegative() {
-        #expect(Formatters.dollars(from: -50000) == "-$50.00")
-    }
-
-    @Test("Converts zero milliunits to dollars")
-    func dollarsZero() {
-        #expect(Formatters.dollars(from: 0) == "$0.00")
-    }
-
-    @Test("Converts fractional milliunits correctly")
-    func dollarsFractional() {
-        // 12340 milliunits = $12.34
-        #expect(Formatters.dollars(from: 12340) == "$12.34")
-    }
-
-    @Test("Converts large amounts with comma grouping")
-    func dollarsLargeAmount() {
-        // 1_234_567_890 milliunits = $1,234,567.89
-        #expect(Formatters.dollars(from: 1_234_567_890) == "$1,234,567.89")
-    }
-
-    @Test("Converts single digit cents")
-    func dollarsSingleDigitCents() {
-        // 1050 milliunits = $1.05
-        #expect(Formatters.dollars(from: 1050) == "$1.05")
-    }
-
-    @Test("Handles sub-dollar amount")
-    func dollarsSubDollar() {
-        #expect(Formatters.dollars(from: 990) == "$0.99")
+    @Test("Falls back to plain number when formatted is nil or empty", arguments: [
+        (50000, "50.00"),
+        (-50000, "-50.00"),
+        (0, "0.00"),
+        (12340, "12.34"),
+        (1050, "1.05"),
+        (990, "0.99"),
+        (1_234_567_890, "1,234,567.89"),
+        (12345, "12.345"),
+    ])
+    func moneyFallback(milliunits: Int, expected: String) {
+        #expect(Formatters.money(milliunits) == expected)
+        #expect(Formatters.money(milliunits, formatted: "") == expected)
     }
 
     // MARK: - milliunits(from:)
@@ -76,12 +58,11 @@ struct FormattersTests {
         #expect(Formatters.milliunits(from: 12.3455) == 12346)
     }
 
-    @Test("Round-trips dollars through milliunits and back")
+    @Test("Round-trips amounts through milliunits and back")
     func roundTrip() {
         let original = -42.50
         let milliunits = Formatters.milliunits(from: original)
-        let formatted = Formatters.dollars(from: milliunits)
-        #expect(formatted == "-$42.50")
+        #expect(Formatters.money(milliunits) == "-42.50")
     }
 
     // MARK: - escapeTableCell
@@ -99,6 +80,11 @@ struct FormattersTests {
     @Test("Handles empty string")
     func escapeTableCellEmpty() {
         #expect(Formatters.escapeTableCell("") == "")
+    }
+
+    @Test("Flattens newlines in table cells")
+    func escapeTableCellNewlines() {
+        #expect(Formatters.escapeTableCell("line one\nline two") == "line one line two")
     }
 
     @Test("Handles multiple pipes")

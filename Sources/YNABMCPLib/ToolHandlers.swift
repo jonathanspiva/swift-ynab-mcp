@@ -2,106 +2,120 @@ import Foundation
 import MCP
 import SwiftYNAB
 
+/// One MCP tool: its definition, whether it writes to YNAB, and its handler.
+public struct ToolSpec: Sendable {
+    public typealias Handler = @Sendable ([String: Value], YNABClient) async throws -> CallTool.Result
+
+    public let tool: Tool
+    public let handler: Handler
+
+    public var isWrite: Bool { tool.annotations.readOnlyHint != true }
+
+    init(
+        name: String,
+        title: String,
+        description: String,
+        inputSchema: Value,
+        annotations: Tool.Annotations,
+        handler: @escaping Handler
+    ) {
+        var annotations = annotations
+        annotations.title = title
+        self.tool = Tool(
+            name: name,
+            title: title,
+            description: description,
+            inputSchema: inputSchema,
+            annotations: annotations
+        )
+        self.handler = handler
+    }
+}
+
 public enum ToolHandlers {
 
-    // MARK: - All Tools
+    // MARK: - Registry
 
-    public static let allTools: [Tool] = [
-        // Read tools
-        listBudgetsTool,
-        listAccountsTool,
-        listCategoriesTool,
-        getBudgetSummaryTool,
-        listRecentTransactionsTool,
-        getMonthSummaryTool,
-        getTransactionTool,
-        listPayeesTool,
-        getTransactionsByPayeeTool,
-        getTransactionsByCategoryTool,
-        listScheduledTransactionsTool,
-        // Write tools
-        createTransactionTool,
-        updateTransactionTool,
-        bulkUpdateTransactionsTool,
-        renamePayeeTool,
-        updateCategoryBudgetTool,
-    ]
+    public static let allSpecs: [ToolSpec] = readSpecs + writeSpecs
+
+    public static var allTools: [Tool] { allSpecs.map(\.tool) }
+
+    /// Tools to advertise. In read-only mode write tools are not listed at all.
+    public static func tools(readOnly: Bool) -> [Tool] {
+        allSpecs.filter { !readOnly || !$0.isWrite }.map(\.tool)
+    }
+
+    static let specsByName: [String: ToolSpec] = Dictionary(
+        uniqueKeysWithValues: allSpecs.map { ($0.tool.name, $0) }
+    )
 
     // MARK: - Call Routing
 
     public static func handleCall(
         name: String,
         arguments: [String: Value]?,
-        client: YNABClient
+        client: YNABClient,
+        readOnly: Bool = false
     ) async -> CallTool.Result {
-        do {
-            let args = arguments ?? [:]
-            switch name {
-            // Read tools
-            case "list_budgets":
-                return try await handleListBudgets(client: client)
-            case "list_accounts":
-                return try await handleListAccounts(args: args, client: client)
-            case "list_categories":
-                return try await handleListCategories(args: args, client: client)
-            case "get_budget_summary":
-                return try await handleGetBudgetSummary(args: args, client: client)
-            case "list_recent_transactions":
-                return try await handleListRecentTransactions(args: args, client: client)
-            case "get_month_summary":
-                return try await handleGetMonthSummary(args: args, client: client)
-            case "get_transaction":
-                return try await handleGetTransaction(args: args, client: client)
-            case "list_payees":
-                return try await handleListPayees(args: args, client: client)
-            case "get_transactions_by_payee":
-                return try await handleGetTransactionsByPayee(args: args, client: client)
-            case "get_transactions_by_category":
-                return try await handleGetTransactionsByCategory(args: args, client: client)
-            case "list_scheduled_transactions":
-                return try await handleListScheduledTransactions(args: args, client: client)
-            // Write tools
-            case "create_transaction":
-                return try await handleCreateTransaction(args: args, client: client)
-            case "update_transaction":
-                return try await handleUpdateTransaction(args: args, client: client)
-            case "bulk_update_transactions":
-                return try await handleBulkUpdateTransactions(args: args, client: client)
-            case "rename_payee":
-                return try await handleRenamePayee(args: args, client: client)
-            case "update_category_budget":
-                return try await handleUpdateCategoryBudget(args: args, client: client)
-            default:
-                return CallTool.Result(
-                    content: [.text("Unknown tool: \(name)")],
-                    isError: true
-                )
-            }
-        } catch {
-            return CallTool.Result(
-                content: [.text("Error: \(error)")],
-                isError: true
-            )
+        guard let spec = specsByName[name] else {
+            return errorResult("Unknown tool: \(name)")
         }
+        do {
+            if readOnly && spec.isWrite {
+                throw YNABMCPError.readOnlyMode(tool: name)
+            }
+            return try await spec.handler(arguments ?? [:], client)
+        } catch {
+            return errorResult(ErrorFormatter.message(for: error))
+        }
+    }
+
+    // MARK: - Results
+
+    static func textResult(_ text: String) -> CallTool.Result {
+        CallTool.Result(content: [.text(text: text, annotations: nil, _meta: nil)])
+    }
+
+    static func errorResult(_ text: String) -> CallTool.Result {
+        CallTool.Result(content: [.text(text: text, annotations: nil, _meta: nil)], isError: true)
     }
 
     // MARK: - Parameter Helpers
 
+    static func planId(_ args: [String: Value], client: YNABClient) -> String {
+        if let id = args["plan_id"]?.stringValue, !id.isEmpty {
+            return id
+        }
+        return client.defaultPlanId
+    }
+
     public static func requireString(_ args: [String: Value], key: String) throws -> String {
-        guard let value = args[key]?.stringValue else {
+        guard let value = args[key]?.stringValue, !value.isEmpty else {
             throw YNABMCPError.missingParameter(key)
         }
         return value
     }
 
+    public static func optionalDouble(_ args: [String: Value], key: String) throws -> Double? {
+        guard let value = args[key], !value.isNull else { return nil }
+        if let d = value.doubleValue { return d }
+        if let i = value.intValue { return Double(i) }
+        throw YNABMCPError.invalidParameter(key, detail: "must be a number")
+    }
+
     public static func requireDouble(_ args: [String: Value], key: String) throws -> Double {
-        if let d = args[key]?.doubleValue {
-            return d
+        guard let value = try optionalDouble(args, key: key) else {
+            throw YNABMCPError.missingParameter(key)
         }
-        if let i = args[key]?.intValue {
-            return Double(i)
+        return value
+    }
+
+    public static func optionalBool(_ args: [String: Value], key: String) throws -> Bool? {
+        guard let value = args[key], !value.isNull else { return nil }
+        guard let bool = value.boolValue else {
+            throw YNABMCPError.invalidParameter(key, detail: "must be true or false")
         }
-        throw YNABMCPError.missingParameter(key)
+        return bool
     }
 
     public static func requireStringArray(_ args: [String: Value], key: String) throws -> [String] {
@@ -109,13 +123,14 @@ public enum ToolHandlers {
             throw YNABMCPError.missingParameter(key)
         }
         let strings = arrayValue.compactMap(\.stringValue)
-        guard !strings.isEmpty else {
-            throw YNABMCPError.invalidParameter(key, detail: "Array must contain at least one string")
+        guard !strings.isEmpty, strings.count == arrayValue.count else {
+            throw YNABMCPError.invalidParameter(key, detail: "must be a non-empty array of strings")
         }
         return strings
     }
 
-    public static func parseFlagColor(_ string: String?) -> FlagColor? {
+    /// Returns nil when absent; throws on an unrecognized value instead of silently ignoring it.
+    public static func parseFlagColor(_ string: String?) throws -> FlagColor? {
         guard let string else { return nil }
         switch string.lowercased() {
         case "red": return .red
@@ -125,29 +140,66 @@ public enum ToolHandlers {
         case "blue": return .blue
         case "purple": return .purple
         case "none", "": return FlagColor.none
-        default: return nil
+        default:
+            throw YNABMCPError.invalidParameter(
+                "flag_color", detail: "'\(string)' is not one of red, orange, yellow, green, blue, purple, none"
+            )
         }
     }
 
-    public static func parseClearedStatus(_ string: String?) -> ClearedStatus? {
+    /// Returns nil when absent; throws on an unrecognized value instead of silently ignoring it.
+    public static func parseClearedStatus(_ string: String?) throws -> ClearedStatus? {
         guard let string else { return nil }
         switch string.lowercased() {
         case "cleared": return .cleared
         case "reconciled": return .reconciled
         case "uncleared": return .uncleared
-        default: return nil
+        default:
+            throw YNABMCPError.invalidParameter(
+                "cleared", detail: "'\(string)' is not one of cleared, uncleared, reconciled"
+            )
         }
     }
 
     private static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd"
         formatter.timeZone = TimeZone(identifier: "UTC")
+        formatter.isLenient = false
         return formatter
     }()
 
     public static func parseDate(_ string: String?) -> Date? {
-        guard let string else { return nil }
+        guard let string, string.count == 10 else { return nil }
         return dateFormatter.date(from: string)
+    }
+
+    /// Parse an optional YYYY-MM-DD argument, throwing if it is present but malformed.
+    public static func optionalDate(_ args: [String: Value], key: String) throws -> Date? {
+        guard let raw = args[key]?.stringValue else { return nil }
+        guard let date = parseDate(raw) else {
+            throw YNABMCPError.invalidParameter(key, detail: "'\(raw)' is not a valid YYYY-MM-DD date")
+        }
+        return date
+    }
+
+    /// Validate a required YYYY-MM-DD argument and return it as the string YNAB expects.
+    public static func requireDateString(_ args: [String: Value], key: String) throws -> String {
+        let raw = try requireString(args, key: key)
+        guard parseDate(raw) != nil else {
+            throw YNABMCPError.invalidParameter(key, detail: "'\(raw)' is not a valid YYYY-MM-DD date")
+        }
+        return raw
+    }
+
+    /// Accept 'current' or a YYYY-MM-01 month.
+    public static func requireMonth(_ args: [String: Value], key: String = "month") throws -> String {
+        let raw = try requireString(args, key: key)
+        if raw.lowercased() == "current" { return "current" }
+        guard parseDate(raw) != nil, raw.hasSuffix("-01") else {
+            throw YNABMCPError.invalidParameter(key, detail: "'\(raw)' must be 'current' or YYYY-MM-01")
+        }
+        return raw
     }
 }

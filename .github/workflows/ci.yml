@@ -8,10 +8,14 @@ on:
 
 jobs:
   build-and-test:
+    # Newest hosted macOS runner. Local development targets Swift 6.4; the manifest floor
+    # (tools 6.2, macOS 26) is kept at what GitHub can run.
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+      - name: Toolchain
+        run: swift --version
       - name: Build
-        run: swift build
+        run: swift build -c release
       - name: Test
         run: swift test
