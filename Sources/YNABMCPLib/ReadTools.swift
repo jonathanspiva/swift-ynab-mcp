@@ -30,7 +30,7 @@ extension ToolHandlers {
         getTransactionsByCategory,
         listPayees,
         listScheduledTransactions,
-    ]
+    ] + reportSpecs
 
     // MARK: - Plans
 
@@ -353,7 +353,7 @@ extension ToolHandlers {
     }
 
     static func describeRange(since: Date?, until: Date?) -> String {
-        let format: (Date) -> String = { $0.formatted(.iso8601.year().month().day()) }
+        let format: (Date) -> String = isoDay
         switch (since, until) {
         case let (since?, until?): return "from \(format(since)) to \(format(until))"
         case let (since?, nil): return "since \(format(since))"

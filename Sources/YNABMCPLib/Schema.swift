@@ -54,7 +54,38 @@ enum Schema {
         ])
     }
 
+    static func objectArray(
+        _ description: String,
+        items: [String: Value],
+        required: [String],
+        minItems: Int = 1
+    ) -> Value {
+        .object([
+            "type": "array",
+            "items": object(items, required: required),
+            "minItems": .int(minItems),
+            "description": .string(description),
+        ])
+    }
+
     // MARK: - Shared properties
+
+    static let transferAccountId = string(
+        "Make this a transfer to or from this account (the other side is created automatically). Mutually exclusive with payee_name."
+    )
+
+    static let subtransactions = objectArray(
+        "Split lines. Amounts must add up to the transaction amount. Each line has its own category (or transfer_account_id), and optionally a payee_name and memo.",
+        items: [
+            "amount": amount,
+            "category_id": string("Category ID for this line"),
+            "payee_name": string("Payee for this line (defaults to the parent payee)"),
+            "memo": string("Memo for this line"),
+            "transfer_account_id": string("Make this line a transfer to or from this account"),
+        ],
+        required: ["amount"],
+        minItems: 2
+    )
 
     static let planId = string(
         "Plan (budget) ID. Optional: defaults to the last-used plan, or YNAB_PLAN_ID if set. Use list_plans to see IDs."

@@ -29,6 +29,23 @@ public enum Formatters {
         Int((amount * 1000).rounded())
     }
 
+    /// Label for a split line. Transfer lines name the transfer payee (e.g. "Transfer : Savings")
+    /// instead of YNAB's placeholder "Uncategorized", keeping a real category when there is one
+    /// (transfers to tracking accounts are categorized).
+    public static func splitLineLabel(_ sub: SubTransaction) -> String {
+        let category = sub.categoryName ?? "-"
+        guard sub.transferAccountId != nil else { return category }
+        let target = sub.payeeName ?? "Transfer"
+        if sub.categoryName == nil || category == "Uncategorized" { return target }
+        return "\(target), \(category)"
+    }
+
+    /// Round milliunits to the nearest cent (10 milliunits) so computed values like averages
+    /// don't print a third decimal place.
+    public static func roundToCents(_ milliunits: Int) -> Int {
+        Int((Double(milliunits) / 10).rounded()) * 10
+    }
+
     /// Escape characters that break markdown table cells.
     public static func escapeTableCell(_ value: String) -> String {
         value
@@ -128,9 +145,8 @@ public enum Formatters {
         if !parts.isEmpty {
             lines.append("\n## Split\n")
             for sub in parts {
-                let category = sub.categoryName ?? "-"
                 let memo = sub.memo.map { " (\($0))" } ?? ""
-                lines.append("- \(money(sub.amount, formatted: sub.amountFormatted)): \(category)\(memo)")
+                lines.append("- \(money(sub.amount, formatted: sub.amountFormatted)): \(splitLineLabel(sub))\(memo)")
             }
         }
         return lines.joined(separator: "\n")

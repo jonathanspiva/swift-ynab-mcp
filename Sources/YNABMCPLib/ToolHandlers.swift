@@ -161,11 +161,13 @@ public enum ToolHandlers {
         }
     }
 
+    /// Local time zone on purpose: SwiftYNAB formats `since_date`/`until_date` in the current time zone,
+    /// so parsing in UTC would shift every date one day earlier west of UTC.
     private static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd"
-        formatter.timeZone = TimeZone(identifier: "UTC")
+        formatter.timeZone = .current
         formatter.isLenient = false
         return formatter
     }()
@@ -173,6 +175,11 @@ public enum ToolHandlers {
     public static func parseDate(_ string: String?) -> Date? {
         guard let string, string.count == 10 else { return nil }
         return dateFormatter.date(from: string)
+    }
+
+    /// Format a date as YYYY-MM-DD in the local time zone (the inverse of `parseDate`).
+    public static func isoDay(_ date: Date) -> String {
+        dateFormatter.string(from: date)
     }
 
     /// Parse an optional YYYY-MM-DD argument, throwing if it is present but malformed.

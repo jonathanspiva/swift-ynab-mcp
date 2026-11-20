@@ -20,20 +20,52 @@ extension ToolHandlers {
         openWorldHint: false
     )
 
+    /// Removes data that can't be restored through the API.
+    static let deleteAnnotations = Tool.Annotations(
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: true,
+        openWorldHint: false
+    )
+
     static let writeSpecs: [ToolSpec] = [
         createTransaction,
         updateTransaction,
         bulkUpdateTransactions,
+        deleteTransaction,
         renamePayee,
         setCategoryAssigned,
+        createAccount,
+        reconcileAccount,
     ]
+
+    static let deleteTransaction = ToolSpec(
+        name: "delete_transaction",
+        title: "Delete transaction",
+        description: "Permanently delete one transaction (and its split lines). Deleting one side of a transfer deletes both sides. Confirm with the user first; this can't be undone through the API.",
+        inputSchema: Schema.object(
+            ["plan_id": Schema.planId, "transaction_id": Schema.string("Transaction ID")],
+            required: ["transaction_id"]
+        ),
+        annotations: deleteAnnotations
+    ) { args, client in
+        let transactionId = try requireString(args, key: "transaction_id")
+        let deleted = try await client.deleteTransaction(
+            planId: planId(args, client: client),
+            transactionId: transactionId
+        )
+        guard let deleted else {
+            return textResult("# Transaction Deleted\n\n- **ID**: `\(transactionId)`")
+        }
+        return textResult(Formatters.formatTransactionDetail(deleted, heading: "Transaction Deleted"))
+    }
 
     // MARK: - Transactions
 
     static let createTransaction = ToolSpec(
         name: "create_transaction",
         title: "Create transaction",
-        description: "Create a transaction. Amount is in currency units (negative for spending). New transactions are approved unless approved=false.",
+        description: "Create a transaction. Amount is in currency units (negative for spending). New transactions are approved unless approved=false. For a transfer, pass transfer_account_id (amount is from account_id's side: negative moves money out of it). For a split, pass subtransactions.",
         inputSchema: Schema.object(
             [
                 "plan_id": Schema.planId,
@@ -41,41 +73,53 @@ extension ToolHandlers {
                 "date": Schema.date("Transaction date"),
                 "amount": Schema.amount,
                 "payee_name": Schema.string("Payee name. YNAB matches an existing payee or creates one."),
-                "category_id": Schema.string("Category ID (see list_categories)"),
+                "transfer_account_id": Schema.transferAccountId,
+                "category_id": Schema.string("Category ID (see list_categories). Omit for splits and for transfers between on-budget accounts."),
                 "memo": Schema.string("Memo"),
                 "cleared": Schema.cleared,
                 "approved": Schema.boolean("Approved status (default true)"),
                 "flag_color": Schema.flagColor,
+                "subtransactions": Schema.subtransactions,
             ],
             required: ["account_id", "date", "amount"]
         ),
         annotations: createAnnotations
     ) { args, client in
+        let planId = planId(args, client: client)
+        let amount = Formatters.milliunits(from: try requireDouble(args, key: "amount"))
+        let transferAccountId = try optionalTransferAccount(args)
+        let splitLines = try parseSplitLines(args)
+        if let splitLines {
+            try validateSplitTotal(splitLines, total: amount)
+        }
+        let transferPayees = try await transferPayeeIds(
+            for: [transferAccountId].compactMap { $0 } + (splitLines ?? []).compactMap(\.transferAccountId),
+            planId: planId,
+            client: client
+        )
+
         let transaction = NewTransaction(
             accountId: try requireString(args, key: "account_id"),
             date: try requireDateString(args, key: "date"),
-            amount: Int64(Formatters.milliunits(from: try requireDouble(args, key: "amount"))),
-            payeeId: nil,
+            amount: Int64(amount),
+            payeeId: transferAccountId.flatMap { transferPayees[$0] },
             payeeName: args["payee_name"]?.stringValue,
             categoryId: args["category_id"]?.stringValue,
             memo: args["memo"]?.stringValue,
             cleared: try parseClearedStatus(args["cleared"]?.stringValue) ?? .uncleared,
             approved: try optionalBool(args, key: "approved") ?? true,
             flagColor: try parseFlagColor(args["flag_color"]?.stringValue),
-            subtransactions: nil,
+            subtransactions: splitLines.map { saveSubtransactions($0, transferPayees: transferPayees) },
             importId: nil
         )
-        let created = try await client.createTransaction(
-            planId: planId(args, client: client),
-            transaction: transaction
-        )
+        let created = try await client.createTransaction(planId: planId, transaction: transaction)
         return textResult(Formatters.formatTransactionDetail(created, heading: "Transaction Created"))
     }
 
     static let updateTransaction = ToolSpec(
         name: "update_transaction",
         title: "Update transaction",
-        description: "Update one transaction. Only the fields you pass are changed. Amount is in currency units (negative for spending).",
+        description: "Update one transaction. Only the fields you pass are changed. Amount is in currency units (negative for spending). Pass transfer_account_id to turn it into a transfer (YNAB creates the other side; delete any duplicate already imported there). Pass subtransactions to split a transaction that isn't already split; YNAB does not allow editing the lines of an existing split.",
         inputSchema: Schema.object(
             [
                 "plan_id": Schema.planId,
@@ -84,24 +128,29 @@ extension ToolHandlers {
                 "date": Schema.date("Transaction date"),
                 "amount": Schema.amount,
                 "payee_name": Schema.string("Payee name"),
+                "transfer_account_id": Schema.transferAccountId,
                 "category_id": Schema.string("Category ID (see list_categories)"),
                 "memo": Schema.string("Memo"),
                 "cleared": Schema.cleared,
                 "approved": Schema.boolean("Approved status"),
                 "flag_color": Schema.flagColor,
+                "subtransactions": Schema.subtransactions,
             ],
             required: ["transaction_id"]
         ),
         annotations: updateAnnotations
     ) { args, client in
+        let planId = planId(args, client: client)
         let transactionId = try requireString(args, key: "transaction_id")
         let date: String? = args["date"] == nil ? nil : try requireDateString(args, key: "date")
-        let amount = try optionalDouble(args, key: "amount").map { Int64(Formatters.milliunits(from: $0)) }
+        let amount = try optionalDouble(args, key: "amount").map { Formatters.milliunits(from: $0) }
+        let transferAccountId = try optionalTransferAccount(args)
+        let splitLines = try parseSplitLines(args)
 
-        let transaction = ExistingTransaction(
+        var changes = ExistingTransaction(
             accountId: args["account_id"]?.stringValue,
             date: date,
-            amount: amount,
+            amount: amount.map(Int64.init),
             payeeId: nil,
             payeeName: args["payee_name"]?.stringValue,
             categoryId: args["category_id"]?.stringValue,
@@ -111,13 +160,42 @@ extension ToolHandlers {
             flagColor: try parseFlagColor(args["flag_color"]?.stringValue),
             subtransactions: nil
         )
-        guard transaction.hasChanges else {
+        guard changes.hasChanges || transferAccountId != nil || splitLines != nil else {
             throw YNABMCPError.invalidParameter("update_transaction", detail: "pass at least one field to change")
         }
+
+        if let splitLines {
+            // Validate against the new amount, or the current one if the amount isn't changing.
+            let total: Int
+            if let amount {
+                total = amount
+            } else {
+                total = try await client.getTransaction(planId: planId, transactionId: transactionId).amount
+            }
+            try validateSplitTotal(splitLines, total: total)
+        }
+        let transferPayees = try await transferPayeeIds(
+            for: [transferAccountId].compactMap { $0 } + (splitLines ?? []).compactMap(\.transferAccountId),
+            planId: planId,
+            client: client
+        )
+        changes = ExistingTransaction(
+            accountId: changes.accountId,
+            date: changes.date,
+            amount: changes.amount,
+            payeeId: transferAccountId.flatMap { transferPayees[$0] },
+            payeeName: changes.payeeName,
+            categoryId: changes.categoryId,
+            memo: changes.memo,
+            cleared: changes.cleared,
+            approved: changes.approved,
+            flagColor: changes.flagColor,
+            subtransactions: splitLines.map { saveSubtransactions($0, transferPayees: transferPayees) }
+        )
         let updated = try await client.updateTransaction(
-            planId: planId(args, client: client),
+            planId: planId,
             transactionId: transactionId,
-            transaction: transaction
+            transaction: changes
         )
         return textResult(Formatters.formatTransactionDetail(updated, heading: "Transaction Updated"))
     }
